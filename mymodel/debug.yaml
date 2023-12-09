@@ -1,0 +1,6 @@
+id: my-model-debug
+title: "My model title (debug)"
+description: |
+    Debug configuration to test the experimental pipeline.
+
+    A description of the model
