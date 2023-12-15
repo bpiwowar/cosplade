@@ -1,12 +1,11 @@
-# My Model
+# CoSPLADE
 
-This is a template for models developed within [experimaestro-ir (XPMIR)](https://github.com/experimaestro/experimaestro-ir).
+Source code for the CoSPLADE paper implemented with the [experimaestro-ir (XPMIR)](https://github.com/experimaestro/experimaestro-ir) library.
 
+**The code is currently under development**
 
-## Run it
-
+## Training first-stage ranker
 
 ```sh
-xpmir run-experiment mymodel/NAME
+xpmir run-experiment src/first-stage.yaml
 ```
-where `NAME` is a `yaml` file within the directory.
