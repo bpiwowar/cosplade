@@ -7,5 +7,5 @@ Source code for the CoSPLADE paper implemented with the [experimaestro-ir (XPMIR
 ## Training first-stage ranker
 
 ```sh
-xpmir run-experiment src/first-stage.yaml
+experimaestro run-experiment src/first-stage.yaml
 ```

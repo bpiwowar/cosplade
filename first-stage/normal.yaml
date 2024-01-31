@@ -2,4 +2,4 @@ id: my-model
 title: "My model title"
 description: |
     A description of the model
-file: first-stage
+file: experiment
