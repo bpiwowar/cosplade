@@ -1,6 +1,13 @@
-id: my-model-debug
-title: "My model title (debug)"
+id: cosplade-1st-stage-debug
+title: "CoSplade model – 1st stage (debug)"
 description: |
     Debug configuration to test the experimental pipeline.
 
-    A description of the model
+# splade_model_id: naver/splade_v2_max
+
+# We index just a part of the collection to speed up experiments
+max_indexed: 10_000
+file: experiment
+
+optimization:
+    max_epochs: 10

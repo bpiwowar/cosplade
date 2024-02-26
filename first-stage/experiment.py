@@ -4,28 +4,29 @@ from attr import Factory
 from datamaestro import prepare_dataset
 from datamaestro_text.data.conversation.orconvqa import OrConvQADataset
 
-from xpmir.rankers import document_cache, Retriever, Documents
+import xpmir.measures as m
 from xpmir.conversation.learning import DatasetConversationEntrySampler
-from xpmir.conversation.learning.reformulation import DecontextualizedQueryConverter
+from xpmir.conversation.learning.reformulation import \
+    DecontextualizedQueryConverter
 from xpmir.conversation.models.cosplade import (
-    AsymetricMSEContextualizedRepresentationLoss,
-    CoSPLADE,
-)
-from xpmir.evaluation import EvaluationsCollection, Evaluations
+    AsymetricMSEContextualizedRepresentationLoss, CoSPLADE)
+from xpmir.evaluation import Evaluations, EvaluationsCollection
 from xpmir.experiments.helpers import LauncherSpecification, NeuralIRExperiment
 from xpmir.experiments.ir import IRExperimentHelper, ir_experiment
-from xpmir.index.sparse import SparseRetrieverIndexBuilder, SparseRetriever
+from xpmir.index.sparse import SparseRetriever, SparseRetrieverIndexBuilder
 from xpmir.learning.batchers import PowerAdaptativeBatcher
 from xpmir.learning.devices import CudaDevice
 from xpmir.learning.learner import Learner, LearnerOutput
 from xpmir.letor.trainers.alignment import AlignmentTrainer, MSEAlignmentLoss
 from xpmir.neural.splade import MaxAggregation, SpladeTextEncoderV2
 from xpmir.papers import configuration
-from xpmir.papers.results import PaperResults
-from xpmir.text.huggingface.base import HFMaskedLanguageModel, HFModelConfigFromId
-from xpmir.text.huggingface import HFTokenizer, HFStringTokenizer, HFListTokenizer, HFTokenizerAdapter
-import xpmir.measures as m
 from xpmir.papers.helpers.optim import TransformerOptimization
+from xpmir.papers.results import PaperResults
+from xpmir.rankers import Documents, Retriever, document_cache
+from xpmir.text.huggingface import (HFListTokenizer, HFStringTokenizer,
+                                    HFTokenizer, HFTokenizerAdapter)
+from xpmir.text.huggingface.base import (HFMaskedLanguageModel,
+                                         HFModelConfigFromId)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -33,7 +34,7 @@ logging.basicConfig(level=logging.INFO)
 @configuration
 class Launchers:
     learner: LauncherSpecification = Factory(
-        lambda: LauncherSpecification(requirements="cpu(cores=1)")
+        lambda: LauncherSpecification(requirements="cpu(cores=1) & cuda(mem=8G)")
     )
     splade_indexer: LauncherSpecification = Factory(
         lambda: LauncherSpecification(requirements="cpu(cores=1)")
@@ -52,8 +53,21 @@ class Configuration(NeuralIRExperiment):
 
     retrieval_topK: int = 1000
     """How many documents to retrieve"""
-    
+
     optimization: TransformerOptimization = Factory(TransformerOptimization)
+    """Optimization strategy"""
+
+    max_indexed: int = 0
+    """Maximum number of indexed documents (debug)"""
+
+    history_max_len: int = 256
+    """Maximum length for each history entry"""
+
+    history_size = 0
+    """Maximum number of past queries to take into account"""
+
+    queries_max_len: int = 368
+    """Maximum length for queries"""
 
 
 MEASURES = [
@@ -83,28 +97,27 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         tokenizer=HFStringTokenizer.C(tokenizer=tokenizer),
         encoder=HFMaskedLanguageModel.from_pretrained_id(cfg.splade_model_id),
         aggregation=MaxAggregation.C(),
+        maxlen=256,
     )
 
-   
     # --- Evaluation
-    
+
     tests = EvaluationsCollection(
-        cast_2019=Evaluations(
-            prepare_dataset("irds.trec-cast.v1.2019"), MEASURES
-        ),
-        cast_2020=Evaluations(
-            prepare_dataset("irds.trec-cast.v1.2020"), MEASURES
-        ),
-        # TODO: needs to use passages here
-        # cast_2021=Evaluations(
+        # cast_2019=Evaluations(
+        #     prepare_dataset("irds.trec-cast.v1.2019"), MEASURES
+        # ),
+        cast_2020=Evaluations(prepare_dataset("irds.trec-cast.v1.2020"), MEASURES),
+        
+        # cast_2021=Evaluations(  # TODO: needs to use passages for 2021
         #     prepare_dataset("irds.trec-cast.v2.2021"), MEASURES
+        # ),
+        # cast_2022=Evaluations(
+        #     prepare_dataset("irds.trec-cast.v3.2022"), MEASURES
         # ),
     )
 
     @document_cache
-    def splade_index(
-        documents: Documents
-    ):
+    def splade_index(documents: Documents):
         return SparseRetrieverIndexBuilder.C(
             batch_size=512,
             batcher=PowerAdaptativeBatcher(),
@@ -112,13 +125,15 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             device=device,
             documents=documents,
             ordered_index=False,
-            max_docs=0,
+            max_docs=cfg.max_indexed,
         ).submit(launcher=launcher_splade_indexer)
 
     # --- Evaluate with manually rewritten queries
 
     splade_gold_encoder = SpladeTextEncoderV2.C(
-        tokenizer=HFTokenizerAdapter.C(tokenizer=tokenizer, converter=DecontextualizedQueryConverter.C()),
+        tokenizer=HFTokenizerAdapter.C(
+            tokenizer=tokenizer, converter=DecontextualizedQueryConverter.C()
+        ),
         encoder=HFMaskedLanguageModel.from_pretrained_id(cfg.splade_model_id),
         aggregation=MaxAggregation.C(),
     )
@@ -131,12 +146,12 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             topk=cfg.retrieval_topK,
             batchsize=1,
             encoder=splade_gold_encoder,
-        )
+        ).tag("model", "splade-gold")
 
     tests.evaluate_retriever(gold_splade_retriever)
 
     # --- Learn CoSPLADE (1st stage)
-    
+
     orConvQA: OrConvQADataset = prepare_dataset(
         "com.github.prdwb.orconvqa.preprocessed"
     )
@@ -148,6 +163,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             config=HFModelConfigFromId.C(model_id=cfg.splade_model_id)
         ),
         aggregation=MaxAggregation(),
+        maxlen=cfg.history_max_len,
     )
     queries_encoder = SpladeTextEncoderV2.C(
         tokenizer=HFListTokenizer.C(tokenizer=tokenizer),
@@ -155,14 +171,18 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             config=HFModelConfigFromId.C(model_id=cfg.splade_model_id)
         ),
         aggregation=MaxAggregation.C(),
+        maxlen=cfg.queries_max_len,
     )
     cosplade = CoSPLADE.C(
-        history_size=0, history_encoder=history_encoder, queries_encoder=queries_encoder
-    )
+        history_size=cfg.history_size,
+        history_encoder=history_encoder,
+        queries_encoder=queries_encoder,
+    ).tag("model", "cosplade")
 
     trainer = AlignmentTrainer.C(
         sampler=sampler,
         target_model=splade_gold_encoder,
+        batcher=PowerAdaptativeBatcher(),
         losses={
             "mse": MSEAlignmentLoss.C(),
             "amse": AsymetricMSEContextualizedRepresentationLoss.C(),
@@ -172,11 +192,12 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
     learner = Learner.C(
         random=cfg.random,
         model=cosplade,
-        max_epochs=100,
+        max_epochs=cfg.optimization.max_epochs,
         optimizers=cfg.optimization.optimizer,
         trainer=trainer,
         use_fp16=True,
-        listeners=[]
+        device=device,
+        listeners=[],
     )
     output = learner.submit(launcher=launcher_learner)  # type: LearnerOutput
     helper.tensorboard_service.add(learner, learner.logpath)
