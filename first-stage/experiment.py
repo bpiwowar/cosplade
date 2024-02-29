@@ -37,7 +37,10 @@ class Launchers:
         lambda: LauncherSpecification(requirements="cpu(cores=1) & cuda(mem=8G)")
     )
     splade_indexer: LauncherSpecification = Factory(
-        lambda: LauncherSpecification(requirements="cpu(cores=1)")
+        lambda: LauncherSpecification(requirements="cpu(cores=1)  & cuda(mem=8G)")
+    )
+    splade_retriever: LauncherSpecification = Factory(
+        lambda: LauncherSpecification(requirements="cpu(cores=1)  & cuda(mem=8G)")
     )
 
 
@@ -87,8 +90,11 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
     # --- Get launchers
 
     device = CudaDevice.C()
-    launcher_learner = cfg.launchers.learner.launcher
-    launcher_splade_indexer = cfg.launchers.splade_indexer.launcher
+    splade_indexer_launcher = cfg.launchers.splade_indexer.launcher
+    splade_retriever_launcher = cfg.launchers.splade_retriever.launcher
+    learner_launcher = cfg.launchers.learner.launcher
+    
+    mp_device = CudaDevice.C(distributed=True)
 
     # --- SPLADE (from HuggingFace)
 
@@ -116,17 +122,18 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         # ),
     )
 
+    # Caches the Splade index task for a document collection
     @document_cache
     def splade_index(documents: Documents):
         return SparseRetrieverIndexBuilder.C(
             batch_size=512,
             batcher=PowerAdaptativeBatcher(),
             encoder=splade_encoder,
-            device=device,
+            device=mp_device,
             documents=documents,
             ordered_index=False,
             max_docs=cfg.max_indexed,
-        ).submit(launcher=launcher_splade_indexer)
+        ).submit(launcher=splade_indexer_launcher)
 
     # --- Evaluate with manually rewritten queries
 
@@ -148,7 +155,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             encoder=splade_gold_encoder,
         ).tag("model", "splade-gold")
 
-    tests.evaluate_retriever(gold_splade_retriever)
+    tests.evaluate_retriever(gold_splade_retriever, launcher=splade_retriever_launcher)
 
     # --- Learn CoSPLADE (1st stage)
 
@@ -199,10 +206,10 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         device=device,
         listeners=[],
     )
-    output = learner.submit(launcher=launcher_learner)  # type: LearnerOutput
+    output = learner.submit(launcher=learner_launcher)  # type: LearnerOutput
     helper.tensorboard_service.add(learner, learner.logpath)
 
-    # --- Evaluate on CoSPLADE
+    # --- Evaluate CoSPLADE
 
     def cosplade_retriever(
         documents: Documents,
@@ -216,7 +223,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             encoder=cosplade,
         )
 
-    tests.evaluate_retriever(cosplade_retriever, init_tasks=[output.learned_model])
+    tests.evaluate_retriever(cosplade_retriever, init_tasks=[output.learned_model], launcher=splade_retriever_launcher)
 
     # --- Return results
     return PaperResults(

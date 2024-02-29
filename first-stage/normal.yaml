@@ -1,5 +1,10 @@
 id: cosplade-1st-stage
 title: "CoSPLADE (1st stage)"
 description: |
-    A description of the model
+    CoSPLADE (1st stage)
 file: experiment
+
+launchers:
+    learner: { requirements: duration=1 days & cuda(mem=24G) }
+    splade_indexer: { requirements: duration=5 days & cuda(mem=24G) * 3 }
+    splade_retriever: { requirements: duration=1 days & cuda(mem=8G) & cpu(mem=32G) }
