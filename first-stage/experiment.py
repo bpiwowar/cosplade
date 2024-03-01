@@ -112,8 +112,8 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         # cast_2019=Evaluations(
         #     prepare_dataset("irds.trec-cast.v1.2019"), MEASURES
         # ),
-        cast_2020=Evaluations(prepare_dataset("irds.trec-cast.v1.2020"), MEASURES),
-        
+        cast_2020=Evaluations(prepare_dataset("irds.trec-cast.v1.2020.judged"), MEASURES),
+
         # cast_2021=Evaluations(  # TODO: needs to use passages for 2021
         #     prepare_dataset("irds.trec-cast.v2.2021"), MEASURES
         # ),
