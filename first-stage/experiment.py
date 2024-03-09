@@ -1,3 +1,4 @@
+from functools import partial
 import logging
 
 from attr import Factory
@@ -6,27 +7,32 @@ from datamaestro_text.data.conversation.orconvqa import OrConvQADataset
 
 import xpmir.measures as m
 from xpmir.conversation.learning import DatasetConversationEntrySampler
-from xpmir.conversation.learning.reformulation import \
-    DecontextualizedQueryConverter
+from xpmir.conversation.learning.reformulation import DecontextualizedQueryConverter
 from xpmir.conversation.models.cosplade import (
-    AsymetricMSEContextualizedRepresentationLoss, CoSPLADE)
+    AsymetricMSEContextualizedRepresentationLoss,
+    CoSPLADE,
+)
 from xpmir.evaluation import Evaluations, EvaluationsCollection
 from xpmir.experiments.helpers import LauncherSpecification, NeuralIRExperiment
 from xpmir.experiments.ir import IRExperimentHelper, ir_experiment
 from xpmir.index.sparse import SparseRetriever, SparseRetrieverIndexBuilder
 from xpmir.learning.batchers import PowerAdaptativeBatcher
 from xpmir.learning.devices import CudaDevice
-from xpmir.learning.learner import Learner, LearnerOutput
+from xpmir.learning.learner import Learner
 from xpmir.letor.trainers.alignment import AlignmentTrainer, MSEAlignmentLoss
 from xpmir.neural.splade import MaxAggregation, SpladeTextEncoderV2
 from xpmir.papers import configuration
 from xpmir.papers.helpers.optim import TransformerOptimization
 from xpmir.papers.results import PaperResults
 from xpmir.rankers import Documents, Retriever, document_cache
-from xpmir.text.huggingface import (HFListTokenizer, HFStringTokenizer,
-                                    HFTokenizer, HFTokenizerAdapter)
-from xpmir.text.huggingface.base import (HFMaskedLanguageModel,
-                                         HFModelConfigFromId)
+from xpmir.text.huggingface import (
+    HFListTokenizer,
+    HFStringTokenizer,
+    HFTokenizer,
+    HFTokenizerAdapter,
+)
+from xpmir.text.huggingface.base import HFMaskedLanguageModel, HFModelConfigFromId
+from xpmir.text.adapters import TopicTextConverter
 
 logging.basicConfig(level=logging.INFO)
 
@@ -93,7 +99,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
     splade_indexer_launcher = cfg.launchers.splade_indexer.launcher
     splade_retriever_launcher = cfg.launchers.splade_retriever.launcher
     learner_launcher = cfg.launchers.learner.launcher
-    
+
     mp_device = CudaDevice.C(distributed=True)
 
     # --- SPLADE (from HuggingFace)
@@ -112,8 +118,9 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         # cast_2019=Evaluations(
         #     prepare_dataset("irds.trec-cast.v1.2019"), MEASURES
         # ),
-        cast_2020=Evaluations(prepare_dataset("irds.trec-cast.v1.2020.judged"), MEASURES),
-
+        cast_2020=Evaluations(
+            prepare_dataset("irds.trec-cast.v1.2020.judged"), MEASURES
+        ),
         # cast_2021=Evaluations(  # TODO: needs to use passages for 2021
         #     prepare_dataset("irds.trec-cast.v2.2021"), MEASURES
         # ),
@@ -144,18 +151,36 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         encoder=HFMaskedLanguageModel.from_pretrained_id(cfg.splade_model_id),
         aggregation=MaxAggregation.C(),
     )
+    splade_raw_encoder = SpladeTextEncoderV2.C(
+        tokenizer=HFTokenizerAdapter.C(
+            tokenizer=tokenizer, converter=TopicTextConverter.C()
+        ),
+        encoder=HFMaskedLanguageModel.from_pretrained_id(cfg.splade_model_id),
+        aggregation=MaxAggregation.C(),
+    )
 
-    def gold_splade_retriever(
+    def retriever(
+        name,
+        encoder,
         documents: Documents,
     ) -> Retriever.C:
         return SparseRetriever.C(
             index=splade_index()(documents),
             topk=cfg.retrieval_topK,
             batchsize=1,
-            encoder=splade_gold_encoder,
-        ).tag("model", "splade-gold")
+            encoder=encoder,
+            in_memory=False,
+            device=device,
+        ).tag("model", name)
 
-    tests.evaluate_retriever(gold_splade_retriever, launcher=splade_retriever_launcher)
+    tests.evaluate_retriever(
+        partial(retriever, "splade-gold", splade_gold_encoder),
+        launcher=splade_retriever_launcher,
+    )
+    tests.evaluate_retriever(
+        partial(retriever, "splade-raw", splade_raw_encoder),
+        launcher=splade_retriever_launcher,
+    )
 
     # --- Learn CoSPLADE (1st stage)
 
@@ -211,19 +236,11 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
 
     # --- Evaluate CoSPLADE
 
-    def cosplade_retriever(
-        documents: Documents,
-    ) -> Retriever.C:
-        # Returns a retrieve that uses CoSPLADE (for query encoding)
-        # and the built index
-        return SparseRetriever.C(
-            index=splade_index()(documents),
-            topk=cfg.retrieval_topK,
-            batchsize=1,
-            encoder=cosplade,
-        )
-
-    tests.evaluate_retriever(cosplade_retriever, init_tasks=[output.learned_model], launcher=splade_retriever_launcher)
+    tests.evaluate_retriever(
+        partial(retriever, "cosplade", cosplade),
+        init_tasks=[output.learned_model],
+        launcher=splade_retriever_launcher,
+    )
 
     # --- Return results
     return PaperResults(

@@ -9,3 +9,8 @@ file: experiment
 
 optimization:
     max_epochs: 10
+
+launchers:
+    learner: { requirements: duration=12 hours & cuda(mem=8G) }
+    splade_indexer: { requirements: duration=6 hours & cuda(mem=24G) * 2 | duration=10 hours & cuda(mem=24G) | duration=12 hours & cuda(mem=8G) }
+    splade_retriever: { requirements: duration=12 hours & cuda(mem=8G) & cpu(mem=32G) }
