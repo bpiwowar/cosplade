@@ -18,7 +18,7 @@ from xpmir.experiments.ir import IRExperimentHelper, ir_experiment
 from xpmir.index.sparse import SparseRetriever, SparseRetrieverIndexBuilder
 from xpmir.learning.batchers import PowerAdaptativeBatcher
 from xpmir.learning.devices import CudaDevice
-from xpmir.learning.learner import Learner
+from xpmir.learning.learner import Learner, LearnerOutput
 from xpmir.letor.trainers.alignment import AlignmentTrainer, MSEAlignmentLoss
 from xpmir.neural.splade import MaxAggregation, SpladeTextEncoderV2
 from xpmir.papers import configuration
@@ -72,7 +72,7 @@ class Configuration(NeuralIRExperiment):
     history_max_len: int = 256
     """Maximum length for each history entry"""
 
-    history_size = 0
+    history_size = [0, 8, 16, 32, 64]
     """Maximum number of past queries to take into account"""
 
     queries_max_len: int = 368
@@ -236,21 +236,24 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         aggregation=MaxAggregation.C(),
         maxlen=cfg.queries_max_len,
     )
-    cosplade = CoSPLADE.C(
-        history_size=cfg.history_size,
-        history_encoder=history_encoder,
-        queries_encoder=queries_encoder,
-    ).tag("model", "cosplade")
+    paper_results_models = {}
+    paper_results_tb_logs = {}
+    for history_size in cfg.history_size:
+        cosplade = CoSPLADE.C(
+            history_size=history_size,
+            history_encoder=history_encoder,
+            queries_encoder=queries_encoder,
+        ).tag("model", f"cosplade_{history_size}")
 
-    trainer = AlignmentTrainer.C(
-        sampler=sampler,
-        target_model=splade_gold_encoder,
-        batcher=PowerAdaptativeBatcher(),
-        losses={
-            "mse": MSEAlignmentLoss.C(),
-            "amse": AsymetricMSEContextualizedRepresentationLoss.C(),
-        },
-    )
+        trainer = AlignmentTrainer.C(
+            sampler=sampler,
+            target_model=splade_gold_encoder,
+            batcher=PowerAdaptativeBatcher(),
+            losses={
+                "mse": MSEAlignmentLoss.C(),
+                "amse": AsymetricMSEContextualizedRepresentationLoss.C(),
+            },
+        )
 
     process(cosplade, trainer)
 
