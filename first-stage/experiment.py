@@ -34,6 +34,8 @@ from xpmir.text.huggingface import (
 from xpmir.text.huggingface.base import HFMaskedLanguageModel, HFModelConfigFromId
 from xpmir.text.adapters import TopicTextConverter
 
+from datasets import HistoryAnswerHydrator
+
 logging.basicConfig(level=logging.INFO)
 
 
@@ -119,7 +121,10 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         #     prepare_dataset("irds.trec-cast.v1.2019"), MEASURES
         # ),
         cast_2020=Evaluations(
-            prepare_dataset("irds.trec-cast.v1.2020.judged"), MEASURES
+            HistoryAnswerHydrator.wrap(
+                prepare_dataset("irds.trec-cast.v1.2020.judged")
+            ),
+            MEASURES,
         ),
         # cast_2021=Evaluations(
         #     prepare_dataset("irds.trec-cast.v2.2021"), MEASURES
@@ -236,8 +241,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         aggregation=MaxAggregation.C(),
         maxlen=cfg.queries_max_len,
     )
-    paper_results_models = {}
-    paper_results_tb_logs = {}
+
     for history_size in cfg.history_size:
         cosplade = CoSPLADE.C(
             history_size=history_size,
@@ -255,7 +259,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             },
         )
 
-    process(cosplade, trainer)
+        process(cosplade, trainer)
 
     # --- Return results
     return PaperResults(
