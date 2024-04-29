@@ -18,7 +18,7 @@ from xpmir.experiments.ir import IRExperimentHelper, ir_experiment
 from xpmir.index.sparse import SparseRetriever, SparseRetrieverIndexBuilder
 from xpmir.learning.batchers import PowerAdaptativeBatcher
 from xpmir.learning.devices import CudaDevice
-from xpmir.learning.learner import Learner
+from xpmir.learning.learner import Learner, LearnerOutput
 from xpmir.letor.trainers.alignment import AlignmentTrainer, MSEAlignmentLoss
 from xpmir.neural.splade import MaxAggregation, SpladeTextEncoderV2
 from xpmir.papers import configuration
@@ -72,7 +72,7 @@ class Configuration(NeuralIRExperiment):
     history_max_len: int = 256
     """Maximum length for each history entry"""
 
-    history_size = 0
+    history_size =  [0, 8, 16, 32, 64]
     """Maximum number of past queries to take into account"""
 
     queries_max_len: int = 368
@@ -128,7 +128,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         #     prepare_dataset("irds.trec-cast.v3.2022"), MEASURES
         # ),
     )
-
+    
     # Caches the Splade index task for a document collection
     @document_cache
     def splade_index(documents: Documents):
@@ -205,46 +205,103 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         aggregation=MaxAggregation.C(),
         maxlen=cfg.queries_max_len,
     )
-    cosplade = CoSPLADE.C(
-        history_size=cfg.history_size,
-        history_encoder=history_encoder,
-        queries_encoder=queries_encoder,
-    ).tag("model", "cosplade")
+    paper_results_models = {}
+    paper_results_tb_logs = {}
+    for history_size in cfg.history_size:
+        cosplade = CoSPLADE.C(
+            history_size=history_size,
+            history_encoder=history_encoder,
+            queries_encoder=queries_encoder,
+        ).tag("model", f"cosplade_{history_size}")
 
-    trainer = AlignmentTrainer.C(
-        sampler=sampler,
-        target_model=splade_gold_encoder,
-        batcher=PowerAdaptativeBatcher(),
-        losses={
-            "mse": MSEAlignmentLoss.C(),
-            "amse": AsymetricMSEContextualizedRepresentationLoss.C(),
-        },
-    )
+        trainer = AlignmentTrainer.C(
+            sampler=sampler,
+            target_model=splade_gold_encoder,
+            batcher=PowerAdaptativeBatcher(),
+            losses={
+                "mse": MSEAlignmentLoss.C(),
+                "amse": AsymetricMSEContextualizedRepresentationLoss.C(),
+            },
+        )
 
-    learner = Learner.C(
-        random=cfg.random,
-        model=cosplade,
-        max_epochs=cfg.optimization.max_epochs,
-        optimizers=cfg.optimization.optimizer,
-        trainer=trainer,
-        use_fp16=True,
-        device=device,
-        listeners=[],
-    )
-    output = learner.submit(launcher=learner_launcher)  # type: LearnerOutput
-    helper.tensorboard_service.add(learner, learner.logpath)
+        learner = Learner.C(
+            random=cfg.random,
+            model=cosplade,
+            max_epochs=cfg.optimization.max_epochs,
+            optimizers=cfg.optimization.optimizer,
+            trainer=trainer,
+            use_fp16=True,
+            device=device,
+            listeners=[],
+        )
+        output = learner.submit(launcher=learner_launcher)  # type: LearnerOutput
+        helper.tensorboard_service.add(learner, learner.logpath)
 
-    # --- Evaluate CoSPLADE
+        paper_results_models[f"cosplade_size_{history_size}-RR@10"] = cosplade
+        paper_results_tb_logs[f"cosplade_size_{history_size}-RR@10"] = learner.logpath
+        # --- Evaluate CoSPLADE
 
-    tests.evaluate_retriever(
-        partial(retriever, "cosplade", cosplade),
-        init_tasks=[output.learned_model],
-        launcher=splade_retriever_launcher,
-    )
+        tests.evaluate_retriever(
+            partial(retriever, "cosplade", cosplade),
+            init_tasks=[output.learned_model],
+            launcher=splade_retriever_launcher,
+        )
 
     # --- Return results
     return PaperResults(
-        models={"cosplade-RR@10": cosplade},
-        evaluations=tests,
-        tb_logs={"cosplade-RR@10": learner.logpath},
-    )
+                models=paper_results_models,
+                evaluations=tests,
+                tb_logs=paper_results_tb_logs,
+            )
+
+    # Boucle sur la taille de l'historique (nb de questions à prendre en compte)
+    #
+    # trainer = AlignmentTrainer.C(
+    #     sampler=sampler,
+    #     target_model=splade_gold_encoder,
+    #     batcher=PowerAdaptativeBatcher(),
+    #     losses={
+    #         "mse": MSEAlignmentLoss.C(),
+    #         "amse": AsymetricMSEContextualizedRepresentationLoss.C(),
+    #     },
+    # )
+
+    # paper_results = []
+    # for history_size in [0, 8, 16, 32, 64]:
+    #   cosplade = CoSPLADE.C(
+    #       history_size=cfg.history_size,
+    #       history_encoder=history_encoder,
+    #       queries_encoder=queries_encoder,
+    #   ).tag("model", "cosplade")
+  
+    #   learner = Learner.C(
+    #       random=cfg.random,
+    #       model=cosplade,
+    #       max_epochs=cfg.optimization.max_epochs,
+    #       optimizers=cfg.optimization.optimizer,
+    #       trainer=trainer,
+    #       use_fp16=True,
+    #       device=device,
+    #       listeners=[],
+    #   )
+    #   output = learner.submit(launcher=learner_launcher)  # type: LearnerOutput
+    #   helper.tensorboard_service.add(learner, learner.logpath)
+  
+    #   # --- Evaluate CoSPLADE
+  
+    #   tests.evaluate_retriever(
+    #       partial(retriever, "cosplade", cosplade),
+    #       init_tasks=[output.learned_model],
+    #       launcher=splade_retriever_launcher,
+    #   )
+      
+    #   paper_results.append(
+    #     PaperResults(
+    #       models={"cosplade-RR@10": cosplade},
+    #       evaluations=tests,
+    #       tb_logs={"cosplade-RR@10": learner.logpath},
+    #     )
+    #   )
+
+    # # --- Return results
+    # return paper_results

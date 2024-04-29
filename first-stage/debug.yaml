@@ -8,7 +8,7 @@ max_indexed: 10_000
 file: experiment
 
 optimization:
-    max_epochs: 10
+    max_epochs: 1
 
 launchers:
     learner: { requirements: duration=12 hours & cuda(mem=8G) }
