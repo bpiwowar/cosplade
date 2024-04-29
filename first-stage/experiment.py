@@ -121,7 +121,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         cast_2020=Evaluations(
             prepare_dataset("irds.trec-cast.v1.2020.judged"), MEASURES
         ),
-        # cast_2021=Evaluations(  # TODO: needs to use passages for 2021
+        # cast_2021=Evaluations(
         #     prepare_dataset("irds.trec-cast.v2.2021"), MEASURES
         # ),
         # cast_2022=Evaluations(
@@ -182,12 +182,43 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         launcher=splade_retriever_launcher,
     )
 
-    # --- Learn CoSPLADE (1st stage)
+    # --- Learn and evaluate CoSPLADE (1st stage)
+
+    models = {}
+    tb_logs = {}
 
     orConvQA: OrConvQADataset = prepare_dataset(
         "com.github.prdwb.orconvqa.preprocessed"
     )
     sampler = DatasetConversationEntrySampler.C(dataset=orConvQA.train)
+
+    def process(cosplade, trainer):
+        learner = Learner.C(
+            random=cfg.random,
+            model=cosplade,
+            max_epochs=cfg.optimization.max_epochs,
+            optimizers=cfg.optimization.optimizer,
+            trainer=trainer,
+            use_fp16=True,
+            device=device,
+            listeners=[],
+        )
+        output = learner.submit(launcher=learner_launcher)  # type: LearnerOutput
+        helper.tensorboard_service.add(learner, learner.logpath)
+
+        # --- Evaluate CoSPLADE
+
+        tests.evaluate_retriever(
+            partial(retriever, "cosplade", cosplade),
+            init_tasks=[output.learned_model],
+            launcher=splade_retriever_launcher,
+        )
+
+        model_id = cosplade.tags()["model"]
+        models[model_id] = cosplade
+        tb_logs[model_id] = learner.logpath
+
+    # --- Test different variants
 
     history_encoder = SpladeTextEncoderV2.C(
         tokenizer=HFStringTokenizer.C(tokenizer=tokenizer),
@@ -221,30 +252,11 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         },
     )
 
-    learner = Learner.C(
-        random=cfg.random,
-        model=cosplade,
-        max_epochs=cfg.optimization.max_epochs,
-        optimizers=cfg.optimization.optimizer,
-        trainer=trainer,
-        use_fp16=True,
-        device=device,
-        listeners=[],
-    )
-    output = learner.submit(launcher=learner_launcher)  # type: LearnerOutput
-    helper.tensorboard_service.add(learner, learner.logpath)
-
-    # --- Evaluate CoSPLADE
-
-    tests.evaluate_retriever(
-        partial(retriever, "cosplade", cosplade),
-        init_tasks=[output.learned_model],
-        launcher=splade_retriever_launcher,
-    )
+    process(cosplade, trainer)
 
     # --- Return results
     return PaperResults(
-        models={"cosplade-RR@10": cosplade},
+        models=models,
         evaluations=tests,
-        tb_logs={"cosplade-RR@10": learner.logpath},
+        tb_logs=tb_logs,
     )
