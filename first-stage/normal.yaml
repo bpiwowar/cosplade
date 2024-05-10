@@ -5,9 +5,9 @@ description: |
 file: experiment
 
 optimization:
-    max_epochs: 16
+    max_epochs: 495
 
 launchers:
     learner: { requirements: duration=1 days & cuda(mem=24G) }
     splade_indexer: { requirements: duration=5 days & cuda(mem=24G) * 3 }
-    splade_retriever: { requirements: duration=1 days & cuda(mem=8G) & cpu(mem=32G) }
+    splade_retriever: { requirements: duration=3 days & cuda(mem=8G) & cpu(mem=32G) }

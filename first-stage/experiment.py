@@ -4,7 +4,7 @@ import logging
 from attr import Factory
 from datamaestro import prepare_dataset
 from datamaestro_text.data.conversation.orconvqa import OrConvQADataset
-
+from experimaestro import tag, tagspath
 import xpmir.measures as m
 from xpmir.conversation.learning import DatasetConversationEntrySampler
 from xpmir.conversation.learning.reformulation import DecontextualizedQueryConverter
@@ -74,7 +74,7 @@ class Configuration(NeuralIRExperiment):
     history_max_len: int = 256
     """Maximum length for each history entry"""
 
-    history_size = [0, 8, 16, 32, 64]
+    history_size = [0,2,4,8,16]
     """Maximum number of past queries to take into account"""
 
     queries_max_len: int = 368
@@ -219,9 +219,8 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             launcher=splade_retriever_launcher,
         )
 
-        model_id = cosplade.tags()["model"]
-        models[model_id] = cosplade
-        tb_logs[model_id] = learner.logpath
+        models[tagspath(cosplade)] = cosplade
+        tb_logs[tagspath(cosplade)] = learner.logpath
 
     # --- Test different variants
 
@@ -241,13 +240,13 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         aggregation=MaxAggregation.C(),
         maxlen=cfg.queries_max_len,
     )
-
+    
     for history_size in cfg.history_size:
         cosplade = CoSPLADE.C(
-            history_size=history_size,
+            history_size=tag(history_size),
             history_encoder=history_encoder,
             queries_encoder=queries_encoder,
-        ).tag("model", f"cosplade_{history_size}")
+        ).tag("model", "cosplade")
 
         trainer = AlignmentTrainer.C(
             sampler=sampler,
