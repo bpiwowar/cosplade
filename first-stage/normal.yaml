@@ -5,7 +5,11 @@ description: |
 file: experiment
 
 optimization:
-    max_epochs: 495
+    # orConvQA has 31 526 records
+    epochs: 128
+    steps_per_epoch: 16
+    batch_size: 16
+
 
 launchers:
     learner: { requirements: duration=1 days & cuda(mem=24G) }

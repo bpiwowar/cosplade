@@ -1,5 +1,6 @@
 from functools import partial
 import logging
+from typing import List
 
 from attr import Factory
 from datamaestro import prepare_dataset
@@ -12,17 +13,17 @@ from xpmir.conversation.models.cosplade import (
     AsymetricMSEContextualizedRepresentationLoss,
     CoSPLADE,
 )
+from xpmir.learning.optim import ParameterOptimizer, RegexParameterFilter, Adam
 from xpmir.evaluation import Evaluations, EvaluationsCollection
 from xpmir.experiments.helpers import LauncherSpecification, NeuralIRExperiment
 from xpmir.experiments.ir import IRExperimentHelper, ir_experiment
 from xpmir.index.sparse import SparseRetriever, SparseRetrieverIndexBuilder
 from xpmir.learning.batchers import PowerAdaptativeBatcher
 from xpmir.learning.devices import CudaDevice
-from xpmir.learning.learner import Learner, LearnerOutput
+from xpmir.learning.learner import Learner
 from xpmir.letor.trainers.alignment import AlignmentTrainer, MSEAlignmentLoss
 from xpmir.neural.splade import MaxAggregation, SpladeTextEncoderV2
 from xpmir.papers import configuration
-from xpmir.papers.helpers.optim import TransformerOptimization
 from xpmir.papers.results import PaperResults
 from xpmir.rankers import Documents, Retriever, document_cache
 from xpmir.text.huggingface import (
@@ -53,6 +54,24 @@ class Launchers:
 
 
 @configuration()
+class Optimization:
+    epochs: int = 4
+    """Number of epochs"""
+
+    steps_per_epoch: int = 8
+    """Steps per epoch"""
+
+    batch_size: int = 8
+    """Number of samples per step"""
+
+    queries_lr = 2e-5
+    """Learning rate for encoding query history"""
+
+    query_answer_lr = 3e-5
+    """Learning rate encoding query/answer"""
+
+
+@configuration()
 class Configuration(NeuralIRExperiment):
     """Experimental configuration"""
 
@@ -65,20 +84,20 @@ class Configuration(NeuralIRExperiment):
     retrieval_topK: int = 1000
     """How many documents to retrieve"""
 
-    optimization: TransformerOptimization = Factory(TransformerOptimization)
+    optimization: Optimization = Factory(Optimization)
     """Optimization strategy"""
 
     max_indexed: int = 0
     """Maximum number of indexed documents (debug)"""
 
     history_max_len: int = 256
-    """Maximum length for each history entry"""
-
-    history_size = [0,2,4,8,16]
-    """Maximum number of past queries to take into account"""
+    """Maximum number of tokens for each query/history entry"""
 
     queries_max_len: int = 368
-    """Maximum length for queries"""
+    """Maximum number of tokens for queries"""
+
+    history_size: List[int] = [1]
+    """Maximum number of past queries to take into account"""
 
 
 MEASURES = [
@@ -118,7 +137,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
 
     tests = EvaluationsCollection(
         # cast_2019=Evaluations(
-        #     prepare_dataset("irds.trec-cast.v1.2019"), MEASURES
+        #     prepare_dataset("irds.trec-cast.v1.2019.jugded"), MEASURES
         # ),
         cast_2020=Evaluations(
             HistoryAnswerHydrator.wrap(
@@ -127,7 +146,9 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             MEASURES,
         ),
         # cast_2021=Evaluations(
-        #     prepare_dataset("irds.trec-cast.v2.2021"), MEASURES
+        #     HistoryAnswerHydrator.wrap(
+        #         prepare_dataset("irds.trec-cast.v2.2021")
+        #     ), MEASURES
         # ),
         # cast_2022=Evaluations(
         #     prepare_dataset("irds.trec-cast.v3.2022"), MEASURES
@@ -197,18 +218,31 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
     )
     sampler = DatasetConversationEntrySampler.C(dataset=orConvQA.train)
 
+    # Use different learning rates for the query history encoder
+    # and the other ones
+    optimizers = [
+        ParameterOptimizer.C(
+            optimizer=Adam.C(lr=cfg.optimization.queries_lr),
+            filter=RegexParameterFilter(includes=[r"(^|\.)queries_encoder\."]),
+        ),
+        ParameterOptimizer.C(
+            optimizer=Adam.C(lr=cfg.optimization.query_answer_lr),
+        ),
+    ]
+
     def process(cosplade, trainer):
         learner = Learner.C(
             random=cfg.random,
             model=cosplade,
-            max_epochs=cfg.optimization.max_epochs,
-            optimizers=cfg.optimization.optimizer,
+            max_epochs=cfg.optimization.epochs,
+            steps_per_epoch=cfg.optimization.steps_per_epoch,
+            optimizers=optimizers,
             trainer=trainer,
             use_fp16=True,
             device=device,
             listeners=[],
         )
-        output = learner.submit(launcher=learner_launcher)  # type: LearnerOutput
+        output = learner.submit(launcher=learner_launcher)
         helper.tensorboard_service.add(learner, learner.logpath)
 
         # --- Evaluate CoSPLADE
@@ -240,7 +274,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
         aggregation=MaxAggregation.C(),
         maxlen=cfg.queries_max_len,
     )
-    
+
     for history_size in cfg.history_size:
         cosplade = CoSPLADE.C(
             history_size=tag(history_size),
@@ -254,7 +288,7 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             batcher=PowerAdaptativeBatcher(),
             losses={
                 "mse": MSEAlignmentLoss.C(),
-                "amse": AsymetricMSEContextualizedRepresentationLoss.C(),
+                "amse": AsymetricMSEContextualizedRepresentationLoss.C(weight=0.5),
             },
         )
 
