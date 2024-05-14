@@ -6,9 +6,11 @@ file: experiment
 
 optimization:
     # orConvQA has 31 526 records
-    epochs: 128
+    epochs: 256
+    # Validate every 16 epochs
+    validation_interval: 16
     steps_per_epoch: 16
-    batch_size: 16
+    batch_size: 32
 
 
 launchers:

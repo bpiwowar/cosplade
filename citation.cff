@@ -1,26 +1,6 @@
-# CoSPLADE: Contextualizing SPLADE for Conversational Information Retrieval
-
-[![paper](https://img.shields.io/badge/arxiv-arXiv%3A2107.05720-brightgreen)](https://arxiv.org/abs/2301.04413)
-
-This repository contains the source code for the CoSPLADE paper implemented with the [experimaestro-ir (XPMIR)](https://github.com/experimaestro/experimaestro-ir) library.
-
-**The code is currently under development**: the first stage training is working.
-
-To run the experiments on a cluster, you need to configure experimaestro [launchers](https://experimaestro-python.readthedocs.io/en/latest/launchers/) and [main settings](https://experimaestro-python.readthedocs.io/en/latest/configuration/).
-
-## Training first-stage ranker
-
-```sh
-experimaestro run-experiment first-stage/normal
-```
-
-
-# cite
-
-Please cite our work as:
-
-```
-@inproceedings{DBLP:conf/ecir/HaiGFNPS23,
+cff-version: 1.2.0
+message: "If you use this code, please cite it as below."
+@proceedings{DBLP:conf/ecir/HaiGFNPS23,
   author    = {Nam Le Hai and
                Thomas Gerald and
                Thibault Formal and
@@ -49,4 +29,3 @@ Please cite our work as:
   doi       = {10.1007/978-3-031-28244-7_34},
   biburl    = {https://dblp.org/rec/conf/ecir/HaiGFNPS23.bib},
 }
-```
