@@ -1,1 +1,1 @@
-experimaestro-ir[neural]>=1.2
+experimaestro-ir[neural]>1.2

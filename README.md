@@ -8,6 +8,15 @@ This repository contains the source code for the CoSPLADE paper implemented with
 
 To run the experiments on a cluster, you need to configure experimaestro [launchers](https://experimaestro-python.readthedocs.io/en/latest/launchers/) and [main settings](https://experimaestro-python.readthedocs.io/en/latest/configuration/).
 
+## Installation
+
+To install the necessary requirements, use
+
+```sh
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+```
+
 ## Training first-stage ranker
 
 ```sh
