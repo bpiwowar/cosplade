@@ -322,8 +322,8 @@ def run(helper: IRExperimentHelper, cfg: Configuration) -> PaperResults:
             launcher=splade_retriever_launcher,
         )
 
-        models[tagspath(cosplade)] = learned_model
-        tb_logs[tagspath(cosplade)] = learner.logpath
+        models[tagspath(learned_model)] = learned_model
+        tb_logs[tagspath(learned_model)] = learner.logpath
 
     # --- Test different variants
 
